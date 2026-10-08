@@ -53,4 +53,3 @@ Log startup tersimpan di `%LOCALAPPDATA%\JadwalKelas\startup.log` untuk membantu
     npm run build
 
 Mode pengembangan membuka Vite di port 1420 dan meneruskan API ke server lokal port 4173. Jalankan server lokal di terminal kedua jika memakai mode ini.
-
