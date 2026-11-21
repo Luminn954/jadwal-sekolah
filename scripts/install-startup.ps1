@@ -4,11 +4,14 @@ $launcher = Join-Path $PSScriptRoot "start-desktop.ps1"
 $root = Split-Path -Parent $PSScriptRoot
 $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
 $taskName = "Jadwal Kelas Widget"
-$userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$userId = $identity.Name
+$userSid = $identity.User.Value
 $arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $launcher + '"'
 
 $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory $root
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+$trigger.UserId = $userSid
 $trigger.Delay = "PT5S"
 $settings = New-ScheduledTaskSettingsSet `
   -StartWhenAvailable `
@@ -18,7 +21,7 @@ $settings = New-ScheduledTaskSettingsSet `
   -DontStopIfGoingOnBatteries `
   -RestartCount 3 `
   -RestartInterval (New-TimeSpan -Minutes 1)
-$principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $userSid -LogonType Interactive -RunLevel Limited
 
 Register-ScheduledTask `
   -TaskName $taskName `

@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import { extname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +49,33 @@ function getLanUrls() {
     }
   }
   return [...addresses].sort();
+}
+
+function ipv4ToNumber(address) {
+  const parts = address.split(".");
+  if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) return null;
+  return parts.reduce((value, part) => (value * 256) + Number(part), 0) >>> 0;
+}
+
+function isLocalNetworkRequest(remoteAddress) {
+  if (!remoteAddress) return false;
+  if (remoteAddress === "::1") return true;
+  const address = remoteAddress.startsWith("::ffff:") ? remoteAddress.slice(7) : remoteAddress;
+  if (address.startsWith("127.")) return true;
+
+  const clientNumber = ipv4ToNumber(address);
+  if (clientNumber === null) return false;
+
+  for (const interfaces of Object.values(networkInterfaces())) {
+    for (const item of interfaces ?? []) {
+      if ((item.family !== "IPv4" && item.family !== 4) || item.internal || item.address.startsWith("169.254.")) continue;
+      const localNumber = ipv4ToNumber(item.address);
+      const maskNumber = ipv4ToNumber(item.netmask);
+      if (localNumber === null || maskNumber === null) continue;
+      if ((clientNumber & maskNumber) === (localNumber & maskNumber)) return true;
+    }
+  }
+  return false;
 }
 
 function readJsonBody(request) {
@@ -143,8 +170,22 @@ const server = createServer(async (request, response) => {
   const method = request.method ?? "GET";
   const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
 
+  if (!isLocalNetworkRequest(request.socket.remoteAddress)) {
+    sendJson(response, 403, { error: "Jadwal hanya bisa diakses dari jaringan lokal laptop." });
+    return;
+  }
+
   if (pathname === "/api/health" && method === "GET") {
     sendJson(response, 200, { ok: true });
+    return;
+  }
+  if (pathname === "/api/version" && method === "GET") {
+    try {
+      const build = JSON.parse(await readFile(resolve(dist, "build-version.json"), "utf8"));
+      sendJson(response, 200, { buildId: typeof build.buildId === "string" ? build.buildId : null });
+    } catch {
+      sendJson(response, 503, { buildId: null, error: "Versi aplikasi belum tersedia." });
+    }
     return;
   }
   if (pathname === "/api/info" && method === "GET") {

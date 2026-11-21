@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDurationMinutes,
+  getLessonTiming,
+  getTasksForSubject,
   getJakartaDateKey,
   getJakartaDayIndex,
   sortSessions,
@@ -8,9 +11,9 @@ import {
   type ScheduleEntry
 } from "./schedule";
 
-const entry = (id: string, startPeriod: number, endPeriod: number): ScheduleEntry => ({
+const entry = (id: string, startPeriod: number, endPeriod: number, dayOfWeek = 3): ScheduleEntry => ({
   id,
-  dayOfWeek: 3,
+  dayOfWeek,
   subject: id,
   startPeriod,
   endPeriod,
@@ -63,5 +66,29 @@ describe("weekly schedule", () => {
       room: "",
       teacher: ""
     }, [existing], existing.id)).toBeNull();
+  });
+
+  it("calculates lesson duration and end time using school breaks", () => {
+    expect(getLessonTiming(entry("Tue morning", 1, 4, 2))).toEqual({
+      durationMinutes: 180,
+      endTime: "09.30"
+    });
+    expect(getLessonTiming(entry("Tue afternoon", 9, 10, 2))).toEqual({
+      durationMinutes: 90,
+      endTime: "15.00"
+    });
+    expect(getLessonTiming(entry("Friday", 5, 6, 5))).toEqual({
+      durationMinutes: 80,
+      endTime: "10.45"
+    });
+    expect(formatDurationMinutes(180)).toBe("3 jam");
+  });
+
+  it("shares tasks across repeated lessons with the same subject", () => {
+    const monday = { ...entry("monday", 1, 2, 1), subject: " Matematika " };
+    const thursday = { ...entry("thursday", 3, 4, 4), subject: "MATEMATIKA", tasks: [
+      { id: "task-1", text: "Latihan", done: false }
+    ] };
+    expect(getTasksForSubject([monday, thursday], "matematika")).toEqual(thursday.tasks);
   });
 });

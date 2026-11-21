@@ -17,11 +17,11 @@ Data jadwal tersimpan di folder `data\schedules.json` di dalam folder aplikasi. 
 
 ## Buka dari HP
 
-Sambungkan laptop dan HP ke Wi-Fi yang sama. Ketik alamat LAN yang dicetak server atau ditampilkan di bagian Buka di HP pada aplikasi, misalnya http://192.168.1.20:4173. Server laptop harus tetap menyala selama jadwal dipakai.
+Sambungkan laptop dan HP ke Wi-Fi yang sama. Ketik alamat LAN yang dicetak server atau ditampilkan di bagian Buka di HP pada aplikasi. Server laptop harus tetap menyala selama jadwal dipakai. Server hanya melayani perangkat dari jaringan lokal yang sama.
 
 Setiap kartu pelajaran memiliki panel Catatan & tugas. Catatan dan daftar tugas disimpan bersama data jadwal di laptop dan ikut tersinkron ke HP lewat Wi-Fi lokal.
 
-Browser HP dapat melihat dan mengubah jadwal yang sama selama terhubung ke laptop. Saat server tidak terjangkau, perangkat menampilkan salinan terakhir yang tersimpan dan menonaktifkan edit.
+Browser HP dapat melihat dan mengubah jadwal yang sama selama terhubung ke laptop. Perubahan jadwal muncul di perangkat lain maksimal dalam 15 detik. Buka kembali pintasan HP sekali setelah pembaruan fitur ini; berikutnya, halaman memeriksa versi otomatis dan memperbarui diri maksimal 30 detik setelah laptop membangun update. Saat server tidak terjangkau, perangkat menampilkan salinan terakhir yang tersimpan dan menonaktifkan edit.
 
 Chrome mensyaratkan HTTPS atau localhost untuk memasang PWA penuh. Alamat LAN lokal memakai HTTP, jadi HP tetap bisa membuka aplikasi di browser, tetapi tombol instalasi PWA bisa tidak tersedia. Menu browser dapat menawarkan pintasan layar utama.
 

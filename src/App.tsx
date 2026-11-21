@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Copy,
   Edit3,
@@ -24,6 +26,9 @@ import {
   DAY_SHORT_LABELS,
   WEEKDAY_ORDER,
   formatPeriodRange,
+  formatDurationMinutes,
+  getTasksForSubject,
+  getLessonTiming,
   getJakartaDateLabel,
   getJakartaDayIndex,
   sortSessions,
@@ -66,7 +71,8 @@ function App() {
     month: "2-digit",
     day: "2-digit"
   }).format(now);
-  const [activeDay, setActiveDay] = useState(todayIndex);
+  const [dayOffset, setDayOffset] = useState(0);
+  const activeDay = ((todayIndex + dayOffset) % 7 + 7) % 7;
   const [profileId, setProfileId] = useState(getSavedProfileId);
   const [serverInfo, setServerInfo] = useState<ServerInfo>({ lanUrls: [] });
   const [view, setView] = useState<"today" | "manage">("today");
@@ -77,16 +83,22 @@ function App() {
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [openLessonId, setOpenLessonId] = useState<string | null>(null);
   const appShellRef = useRef<HTMLElement | null>(null);
+  const swipeStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const pauseAutoScrollForSpotifyRef = useRef<() => void>(() => {});
 
   const profile = schedule.snapshot.profiles.find((item) => item.id === profileId) ??
     schedule.snapshot.profiles[0] ?? null;
   const entries = profile?.entries ?? [];
   const selectedEntries = useMemo(
-    () => sortSessions(entries.filter((entry) => entry.dayOfWeek === activeDay)),
+    () => sortSessions(entries.filter((entry) => entry.dayOfWeek === activeDay)).map((entry) => ({
+      ...entry,
+      tasks: getTasksForSubject(entries, entry.subject)
+    })),
     [activeDay, entries]
   );
   const serverOffline = schedule.status === "offline";
+  const editsDisabled = schedule.status !== "online";
+  const selectedDate = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
@@ -101,8 +113,50 @@ function App() {
   }, []);
 
   useEffect(() => {
-    setActiveDay(todayIndex);
+    // Local Wi-Fi HTTP addresses cannot use a service worker. Check the laptop's
+    // build id and reload when it publishes a newer version on the same server.
+    if (window.isSecureContext || import.meta.env.DEV) return;
+
+    let checking = false;
+    const checkForUpdate = async () => {
+      if (checking || document.visibilityState === "hidden" || view === "manage" || openLessonId) return;
+      checking = true;
+      try {
+        const response = await fetch("/api/version", { cache: "no-store" });
+        if (!response.ok) return;
+        const result: unknown = await response.json();
+        if (!result || typeof result !== "object" || !("buildId" in result)) return;
+        const buildId = (result as { buildId: unknown }).buildId;
+        if (typeof buildId !== "string" || !buildId || buildId === __APP_BUILD_ID__) return;
+        window.location.reload();
+      } catch {
+        // A temporary Wi-Fi interruption should not disturb the cached schedule.
+      } finally {
+        checking = false;
+      }
+    };
+
+    void checkForUpdate();
+    const interval = window.setInterval(() => void checkForUpdate(), 30_000);
+    const onFocus = () => void checkForUpdate();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [openLessonId, view]);
+
+  useEffect(() => {
+    setDayOffset(0);
   }, [todayIndex, todayKey]);
+
+  useEffect(() => {
+    if (desktopWidgetMode && view === "today" && appShellRef.current) {
+      appShellRef.current.scrollTop = 0;
+    }
+  }, [dayOffset, desktopWidgetMode, view]);
 
   useEffect(() => {
     if (!schedule.snapshot.profiles.length) return;
@@ -175,9 +229,16 @@ function App() {
       }
 
       const start = ticker.scrollTop;
-      const target = direction === 1 ? maxScroll : 0;
+      const motivationCard = ticker.querySelector<HTMLElement>(".motivation-card");
+      const tickerBottom = ticker.getBoundingClientRect().bottom;
+      const motivationBottom = motivationCard?.getBoundingClientRect().bottom ?? tickerBottom;
+      const motivationStop = Math.min(
+        maxScroll,
+        Math.max(0, start + motivationBottom - tickerBottom + 24)
+      );
+      const target = direction === 1 ? motivationStop : 0;
       direction = direction === 1 ? -1 : 1;
-      const duration = Math.max(1500, Math.min(3200, Math.abs(target - start) * 18));
+      const duration = Math.max(2200, Math.min(5000, Math.abs(target - start) * 20));
       let startedAt = 0;
 
       const animate = (timestamp: number) => {
@@ -190,8 +251,8 @@ function App() {
         if (!startedAt) startedAt = timestamp;
         const progress = Math.min((timestamp - startedAt) / duration, 1);
         const eased = progress < .5
-          ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
         ticker.scrollTop = start + (target - start) * eased;
         if (progress < 1) {
           animationFrame = window.requestAnimationFrame(animate);
@@ -298,6 +359,34 @@ function App() {
     }
   };
 
+  const navigateDay = (direction: -1 | 1) => {
+    setDayOffset((offset) => offset + direction);
+    setActionError(null);
+  };
+
+  const selectWeekday = (day: number) => {
+    let offset = (day - todayIndex + 7) % 7;
+    if (offset > 3) offset -= 7;
+    setDayOffset(offset);
+  };
+
+  const startDaySwipe = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, iframe, [contenteditable='true']")) return;
+    swipeStartRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  };
+
+  const finishDaySwipe = (event: ReactPointerEvent<HTMLElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start || start.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (Math.abs(deltaX) < 52 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+    navigateDay(deltaX < 0 ? 1 : -1);
+  };
+
   const updateLessonDetails = async (
     entry: ScheduleEntry,
     details: { notes?: string; tasks?: ScheduleTask[] }
@@ -386,23 +475,34 @@ function App() {
       {actionNotice ? <Notice kind="success" message={actionNotice} onDismiss={() => setActionNotice(null)} /> : null}
 
       {view === "today" ? (
-        <section className="page-content" key={profile?.id + ":" + activeDay + ":today"} aria-labelledby="page-heading">
+        <section
+          className="page-content schedule-day-view"
+          key={profile?.id + ":" + dayOffset + ":today"}
+          aria-labelledby="page-heading"
+          onPointerDown={startDaySwipe}
+          onPointerUp={finishDaySwipe}
+          onPointerCancel={() => { swipeStartRef.current = null; }}
+        >
           <div className="page-heading">
-            <div className="eyebrow-row"><span className="eyebrow-dot" />{getJakartaDateLabel(now)} · WIB</div>
+            <div className="eyebrow-row"><span className="eyebrow-dot" />{getJakartaDateLabel(selectedDate)} · WIB</div>
             <div className="heading-line">
               <div>
-                <h1 id="page-heading">{activeDay === todayIndex ? "Jadwal hari ini" : "Jadwal " + DAY_LABELS[activeDay]}</h1>
-                <p className="subheading">{profile?.name ?? "Pilih jadwal"} · otomatis mengikuti hari Jakarta</p>
+                <h1 id="page-heading">{dayOffset === 0 ? "Jadwal hari ini" : "Jadwal " + DAY_LABELS[activeDay]}</h1>
+                <p className="subheading">{profile?.name ?? "Pilih jadwal"} · geser untuk lihat hari lain</p>
               </div>
               <div className="lesson-count"><strong>{selectedEntries.length.toString().padStart(2, "0")}</strong><span>mapel</span></div>
             </div>
           </div>
 
-          <DayPicker activeDay={activeDay} todayIndex={todayIndex} onChange={setActiveDay} entries={entries} />
+          <DayPicker activeDay={activeDay} todayIndex={todayIndex} onChange={selectWeekday} entries={entries} />
 
           <div className="section-heading">
             <div><span className="section-kicker">HARI SEKOLAH</span><h2>{DAY_LABELS[activeDay]}</h2></div>
             <span className="section-time"><Clock3 size={14} /> {selectedEntries.length} pelajaran</span>
+            <div className="day-navigation" aria-label="Pindah hari">
+              <button className="day-nav-button" type="button" onClick={() => navigateDay(-1)} title="Jadwal kemarin" aria-label="Lihat jadwal hari sebelumnya"><ChevronLeft size={14} /></button>
+              <button className="day-nav-button" type="button" onClick={() => navigateDay(1)} title="Jadwal besok" aria-label="Lihat jadwal hari berikutnya"><ChevronRight size={14} /></button>
+            </div>
           </div>
 
           {selectedEntries.length ? (
@@ -417,7 +517,7 @@ function App() {
                   index={index}
                   key={entry.id}
                   open={openLessonId === entry.id}
-                  disabled={serverOffline || !profile}
+              disabled={editsDisabled || !profile}
                   onToggle={() => setOpenLessonId((current) => current === entry.id ? null : entry.id)}
                   onUpdate={(details) => updateLessonDetails(entry, details)}
                 />
@@ -451,7 +551,7 @@ function App() {
           <DayPicker
             activeDay={activeDay}
             todayIndex={todayIndex}
-            onChange={(day) => { setActiveDay(day); setEditingId(null); setDraft(newDraft(day)); setActionError(null); }}
+            onChange={(day) => { selectWeekday(day); setEditingId(null); setDraft(newDraft(day)); setActionError(null); }}
             entries={entries}
           />
 
@@ -490,7 +590,7 @@ function App() {
               <div><label className="field-label" htmlFor="room">Ruang <span>opsional</span></label><input id="room" className="text-input" type="text" maxLength={80} placeholder="Ruang kelas" value={draft.room} onChange={(event) => setDraft({ ...draft, room: event.target.value })} /></div>
             </div>
 
-            <button className="primary-button save-button" type="submit" disabled={saving || serverOffline || !profile}>
+            <button className="primary-button save-button" type="submit" disabled={saving || editsDisabled || !profile}>
               {saving ? <><RefreshCw size={15} className="spin" /> Menyimpan…</> : <><Check size={15} /> {editingId ? "Simpan perubahan" : "Tambah pelajaran"}</>}
             </button>
           </form>
@@ -539,8 +639,27 @@ function App() {
 }
 
 function SpotifyPlaylist({ onInteraction }: { onInteraction: () => void }) {
+  const [playerVisible, setPlayerVisible] = useState(false);
+  const playlistRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const playlist = playlistRef.current;
+    if (!playlist || playerVisible) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setPlayerVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "0px 0px -120px 0px", threshold: 0.75 });
+
+    observer.observe(playlist);
+    return () => observer.disconnect();
+  }, [playerVisible]);
+
   return (
     <section
+      ref={playlistRef}
       className="spotify-playlist-card"
       aria-label="Playlist Spotify LUMIN kumpay"
       onPointerEnter={onInteraction}
@@ -552,18 +671,22 @@ function SpotifyPlaylist({ onInteraction }: { onInteraction: () => void }) {
         <div><strong>LUMIN kumpay</strong><span>Playlist Spotify lu · 221 lagu</span></div>
         <span className="spotify-playlist-label">SPOTIFY</span>
       </div>
-      <iframe
-        className="spotify-playlist-embed"
-        title="Putar playlist Spotify LUMIN kumpay"
-        src={spotifyPlaylistEmbedUrl}
-        width="100%"
-        height="152"
-        loading="lazy"
-        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-        referrerPolicy="strict-origin-when-cross-origin"
-      >
-        Buka playlist LUMIN kumpay di Spotify.
-      </iframe>
+      {playerVisible ? (
+        <iframe
+          className="spotify-playlist-embed"
+          title="Putar playlist Spotify LUMIN kumpay"
+          src={spotifyPlaylistEmbedUrl}
+          width="100%"
+          height="152"
+          loading="lazy"
+          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+          referrerPolicy="strict-origin-when-cross-origin"
+        >
+          Buka playlist LUMIN kumpay di Spotify.
+        </iframe>
+      ) : (
+        <div className="spotify-playlist-embed spotify-playlist-placeholder" aria-hidden="true" />
+      )}
     </section>
   );
 }
@@ -622,6 +745,11 @@ function LessonCard({
     void persist({ tasks: tasks.filter((task) => task.id !== taskId) });
   };
 
+  const durationPeriods = entry.endPeriod - entry.startPeriod + 1;
+  const timing = getLessonTiming(entry);
+  const durationLabel = formatDurationMinutes(timing.durationMinutes);
+  const completionLabel = timing.endTime ? `beres ${timing.endTime} WIB` : `selesai JP ke-${entry.endPeriod}`;
+
   return (
     <article
       className={"lesson-card lesson-tone-" + (index % 4) + (open ? " details-open" : "")}
@@ -629,7 +757,7 @@ function LessonCard({
     >
       <div className="lesson-period">
         <strong>{entry.startPeriod.toString().padStart(2, "0")}</strong>
-        <span>{entry.startPeriod === entry.endPeriod ? "1 jam" : entry.startPeriod + "–" + entry.endPeriod}</span>
+        <span>{entry.startPeriod === entry.endPeriod ? "1 JP" : entry.startPeriod + "–" + entry.endPeriod + " JP"}</span>
       </div>
       <div className="lesson-main">
         <div className="lesson-title-row">
@@ -651,6 +779,13 @@ function LessonCard({
           {entry.teacher ? <span><UserRound size={13} />{entry.teacher}</span> : null}
           {entry.room ? <span>{entry.room}</span> : null}
           {!entry.teacher && !entry.room ? <span className="meta-quiet">Jam {entry.startPeriod} sampai {entry.endPeriod}</span> : null}
+        </div>
+        <div
+          className="lesson-timing"
+          aria-label={`Durasi ${durationPeriods} jam pelajaran, ${durationLabel}. ${completionLabel}.`}
+        >
+          <Clock3 size={11} aria-hidden="true" />
+          <span aria-hidden="true">{durationPeriods} JP · {durationLabel} · {completionLabel}</span>
         </div>
       </div>
       {open ? (

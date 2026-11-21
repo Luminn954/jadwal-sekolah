@@ -42,6 +42,57 @@ export type ScheduleDraft = {
   teacher: string;
 };
 
+type SchoolDayPeriods = {
+  firstPeriodStartMinute: number;
+  minutesPerPeriod: number;
+  breaksAfterPeriod: Record<number, number>;
+};
+
+const SCHOOL_DAY_PERIODS: Partial<Record<number, SchoolDayPeriods>> = {
+  // Senin mengikuti tabel Selasa–Kamis yang dikonfirmasi pengguna.
+  1: { firstPeriodStartMinute: 6 * 60 + 30, minutesPerPeriod: 45, breaksAfterPeriod: { 4: 15, 8: 45 } },
+  2: { firstPeriodStartMinute: 6 * 60 + 30, minutesPerPeriod: 45, breaksAfterPeriod: { 4: 15, 8: 45 } },
+  3: { firstPeriodStartMinute: 6 * 60 + 30, minutesPerPeriod: 45, breaksAfterPeriod: { 4: 15, 8: 45 } },
+  4: { firstPeriodStartMinute: 6 * 60 + 30, minutesPerPeriod: 45, breaksAfterPeriod: { 4: 15, 8: 45 } },
+  // Jumat memakai 40 menit per JP dan istirahat 15 menit setelah JP4.
+  5: { firstPeriodStartMinute: 6 * 60 + 30, minutesPerPeriod: 40, breaksAfterPeriod: { 4: 15 } }
+};
+
+export type LessonTiming = {
+  durationMinutes: number;
+  endTime: string | null;
+};
+
+export function getLessonTiming(entry: Pick<ScheduleEntry, "dayOfWeek" | "startPeriod" | "endPeriod">): LessonTiming {
+  const periodCount = entry.endPeriod - entry.startPeriod + 1;
+  const day = SCHOOL_DAY_PERIODS[entry.dayOfWeek];
+  if (!day) return { durationMinutes: periodCount * 45, endTime: null };
+
+  let startMinute = day.firstPeriodStartMinute;
+  for (let period = 1; period < entry.startPeriod; period += 1) {
+    startMinute += day.minutesPerPeriod + (day.breaksAfterPeriod[period] ?? 0);
+  }
+
+  let endMinute = startMinute;
+  for (let period = entry.startPeriod; period <= entry.endPeriod; period += 1) {
+    endMinute += day.minutesPerPeriod;
+    if (period < entry.endPeriod) endMinute += day.breaksAfterPeriod[period] ?? 0;
+  }
+
+  const hours = Math.floor(endMinute / 60) % 24;
+  const minutes = endMinute % 60;
+  const endTime = `${hours.toString().padStart(2, "0")}.${minutes.toString().padStart(2, "0")}`;
+  return { durationMinutes: periodCount * day.minutesPerPeriod, endTime };
+}
+
+export function formatDurationMinutes(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${totalMinutes} menit`;
+  if (minutes === 0) return `${hours} jam`;
+  return `${hours} jam ${minutes} menit`;
+}
+
 const ENGLISH_DAY_INDEX: Record<string, number> = {
   Sunday: 0,
   Monday: 1,
@@ -87,6 +138,23 @@ export function sortSessions(entries: ScheduleEntry[]): ScheduleEntry[] {
   return [...entries].sort(
     (left, right) => left.startPeriod - right.startPeriod || left.endPeriod - right.endPeriod
   );
+}
+
+export function normalizeSubjectKey(subject: string): string {
+  return subject.trim().replace(/\s+/g, " ").toLocaleLowerCase("id-ID");
+}
+
+export function getTasksForSubject(entries: ScheduleEntry[], subject: string): ScheduleTask[] {
+  const subjectKey = normalizeSubjectKey(subject);
+  const tasks = new Map<string, ScheduleTask>();
+  for (const entry of entries) {
+    if (normalizeSubjectKey(entry.subject) !== subjectKey) continue;
+    for (const task of entry.tasks ?? []) {
+      if (tasks.has(task.id)) tasks.set(task.id, task);
+      else if (tasks.size < 30) tasks.set(task.id, task);
+    }
+  }
+  return [...tasks.values()];
 }
 
 export function formatPeriodRange(start: number, end: number): string {

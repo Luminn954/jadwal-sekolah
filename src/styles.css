@@ -73,11 +73,16 @@ h1, h2, h3 { font-family: "Segoe UI", sans-serif; }
 .day-dot.has-classes { background: #a4b89d; }
 .day-option.selected .day-dot.has-classes { background: #64814e; }
 .section-heading { justify-content: space-between; margin: 0 1px 9px; }
-.section-kicker { display: block; margin-bottom: 3px; color: #98a39b; font-size: 8px; font-weight: 800; letter-spacing: .95px; }
-.section-heading h2 { margin: 0; color: #2b4739; font-size: 14px; font-weight: 800; letter-spacing: -.3px; }
 .section-time { gap: 5px; color: #94a198; font-size: 9px; font-weight: 600; }
 .section-time svg { color: #8da27d; }
-
+.schedule-day-view { touch-action: pan-y; }
+.day-navigation { display: flex; align-items: center; gap: 3px; }
+.day-nav-button { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 8px; color: #718579; background: rgba(255,255,255,.56); cursor: pointer; transition: background 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease; }
+.day-nav-button:hover { transform: translateY(-1px); border-color: #cddbc3; color: var(--green); background: #fff; }
+.desktop-widget .day-nav-button { -webkit-app-region: no-drag; border-color: rgba(166,211,239,.16); color: #a8c6da; background: rgba(102,177,220,.1); }
+.desktop-widget .day-nav-button:hover { border-color: rgba(166,211,239,.34); color: #e7f6ff; background: rgba(102,177,220,.2); }
+.section-kicker { display: block; margin-bottom: 3px; color: #98a39b; font-size: 8px; font-weight: 800; letter-spacing: .95px; }
+.section-heading h2 { margin: 0; color: #2b4739; font-size: 14px; font-weight: 800; letter-spacing: -.3px; }
 .schedule-list { display: flex; flex-direction: column; gap: 7px; }
 .lesson-card { position: relative; display: grid; grid-template-columns: 51px minmax(0,1fr); align-items: center; min-height: 63px; padding: 9px 10px; overflow: hidden; border: 1px solid #e7ece5; border-radius: 13px; background: var(--paper); box-shadow: 0 3px 11px rgba(39,61,48,.025); }
 .lesson-card::before { position: absolute; inset: 0 auto 0 0; width: 3px; background: #68b99d; content: ""; }
@@ -94,6 +99,9 @@ h1, h2, h3 { font-family: "Segoe UI", sans-serif; }
 .lesson-meta span { min-width: 0; gap: 4px; overflow: hidden; color: #839087; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .lesson-meta svg { flex: 0 0 auto; color: #a3b09f; }
 .lesson-meta .meta-quiet { color: #9aa69d; }
+.lesson-timing { display: flex; align-items: center; gap: 4px; margin-top: 3px; color: #91b4ce; font-size: 8px; line-height: 1.2; }
+.lesson-timing svg { flex: 0 0 auto; }
+.lesson-timing span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty-day { display: flex; min-height: 150px; flex-direction: column; align-items: center; justify-content: center; padding: 20px; border: 1px dashed #dce5d8; border-radius: 15px; background: rgba(255,255,255,.55); text-align: center; }
 .empty-illustration { display: grid; width: 39px; height: 39px; place-items: center; margin-bottom: 10px; border-radius: 13px; color: #668757; background: #eaf2df; }
 .empty-day h3 { margin: 0; color: #355543; font-size: 12px; font-weight: 800; }
@@ -151,7 +159,6 @@ h1, h2, h3 { font-family: "Segoe UI", sans-serif; }
 .bottom-note { justify-content: center; gap: 6px; margin: 12px 0 0; color: #98a49c; font-size: 8px; text-align: center; }
 .status-dot { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: #8caf67; }
 .status-dot.is-offline { background: #d49b5b; }
-
 @media (min-width: 700px) {
   body { background: radial-gradient(ellipse at top, #f8faf6 0, #f0f4ed 70%); }
   .app-shell { min-height: 100vh; padding-top: 18px; }
@@ -267,6 +274,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline-color:
 }
 
 /* Frameless Electron desktop widget: keep only the current day's schedule. */
+.desktop-widget .view-switch,
+.desktop-widget .day-picker,
+.desktop-widget .phone-connect,
+.desktop-widget .bottom-note { display: none; }
 .desktop-widget-window,
 .desktop-widget-window body,
 .desktop-widget-window #root {
@@ -296,7 +307,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline-color:
 .desktop-widget .view-switch,
 .desktop-widget .day-picker,
 .desktop-widget .phone-connect,
-.desktop-widget .bottom-note { display: none; }
 .desktop-widget .profile-row {
   justify-content: flex-end;
   min-height: 22px;
@@ -578,3 +588,32 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline-color:
     transform: none !important;
   }
 }
+
+/* Keep the desktop widget's motion fluid without animating blur or large shadows. */
+.desktop-widget .page-content {
+  animation: widget-page-enter 420ms cubic-bezier(.22,.61,.36,1) both;
+}
+@keyframes widget-page-enter {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.99); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+.desktop-widget .lesson-card {
+  transition: border-color 220ms ease, background 220ms ease, transform 260ms cubic-bezier(.22,.61,.36,1);
+  animation-name: widget-lesson-enter;
+  animation-duration: 620ms;
+  animation-timing-function: cubic-bezier(.22,.61,.36,1);
+}
+@keyframes widget-lesson-enter {
+  from { opacity: 0; transform: translate3d(18px, 0, 0) scale(.985); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+.desktop-widget::before {
+  filter: none;
+  animation: widget-aura-soft 8s ease-in-out infinite alternate;
+}
+@keyframes widget-aura-soft {
+  from { opacity: .48; transform: translate3d(-10px, 6px, 0) scale(.94); }
+  to { opacity: .78; transform: translate3d(8px, -5px, 0) scale(1.04); }
+}
+.desktop-widget .eyebrow-dot { animation: widget-dot-pulse 2.8s ease-in-out infinite; }
+@keyframes widget-dot-pulse { 0%, 100% { opacity: .72; } 50% { opacity: 1; } }

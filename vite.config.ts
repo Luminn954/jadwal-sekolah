@@ -2,7 +2,21 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
+const buildId = Date.now().toString(36);
+
+const buildVersionPlugin = {
+  name: "jadwal-build-version",
+  generateBundle(this: { emitFile: (file: { type: "asset"; fileName: string; source: string }) => void }) {
+    this.emitFile({
+      type: "asset",
+      fileName: "build-version.json",
+      source: JSON.stringify({ buildId })
+    });
+  }
+};
+
 export default defineConfig({
+  define: { __APP_BUILD_ID__: JSON.stringify(buildId) },
   plugins: [
     react(),
     VitePWA({
@@ -38,7 +52,8 @@ export default defineConfig({
         navigateFallback: "/index.html"
       },
       devOptions: { enabled: false }
-    })
+    }),
+    buildVersionPlugin
   ],
   server: {
     proxy: {

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  getTasksForSubject,
+  normalizeSubjectKey,
   sortSessions,
   validateScheduleDraft,
   type ScheduleDraft,
@@ -73,6 +75,15 @@ export function useSchedule() {
   const [error, setError] = useState<string | null>(null);
   const snapshotRef = useRef(snapshot);
   const refreshGeneration = useRef(0);
+  const mutationQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
+  const enqueueMutation = useCallback(<T,>(operation: () => Promise<T>): Promise<T> => {
+    const queued = mutationQueueRef.current.then(operation, operation);
+    mutationQueueRef.current = queued.then(() => undefined, () => undefined);
+    return queued;
+  }, []);
 
   const acceptSnapshot = useCallback((next: ScheduleSnapshot) => {
     snapshotRef.current = next;
@@ -117,7 +128,7 @@ export function useSchedule() {
   }, [refresh]);
 
   const persist = useCallback(async (profiles: ScheduleProfile[]) => {
-    if (status !== "online") throw new Error("Server lokal lagi offline. Hubungkan dulu ke laptop.");
+    if (statusRef.current !== "online") throw new Error("Server lokal lagi offline. Hubungkan dulu ke laptop.");
     const response = await fetch("/api/schedules", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -138,19 +149,21 @@ export function useSchedule() {
     acceptSnapshot(result);
     setStatus("online");
     setError(null);
-  }, [acceptSnapshot, refresh, status]);
+  }, [acceptSnapshot, refresh]);
 
   const save = useCallback(async (
     profileId: string,
     draft: ScheduleDraft,
     existingId?: string
-  ) => {
+  ) => enqueueMutation(async () => {
     const profile = snapshotRef.current.profiles.find((item) => item.id === profileId);
     if (!profile) throw new Error("Pilih jadwal yang tersedia.");
     const sameDay = profile.entries.filter((entry) => entry.dayOfWeek === draft.dayOfWeek);
     const validation = validateScheduleDraft(draft, sameDay, existingId);
     if (validation) throw new Error(validation);
 
+    const previousEntry = existingId ? profile.entries.find((entry) => entry.id === existingId) : undefined;
+    const subjectChanged = previousEntry && normalizeSubjectKey(previousEntry.subject) !== normalizeSubjectKey(draft.subject);
     const saved: ScheduleEntry = {
       id: existingId ?? newId(),
       dayOfWeek: draft.dayOfWeek,
@@ -159,8 +172,10 @@ export function useSchedule() {
       endPeriod: draft.endPeriod,
       room: draft.room.trim() || null,
       teacher: draft.teacher.trim() || null,
-      notes: existingId ? profile.entries.find((entry) => entry.id === existingId)?.notes ?? "" : "",
-      tasks: existingId ? profile.entries.find((entry) => entry.id === existingId)?.tasks ?? [] : []
+      notes: previousEntry?.notes ?? "",
+      tasks: previousEntry && !subjectChanged
+        ? previousEntry.tasks ?? []
+        : getTasksForSubject(profile.entries, draft.subject)
     };
     const nextProfile = {
       ...profile,
@@ -172,13 +187,13 @@ export function useSchedule() {
       item.id === profileId ? nextProfile : item
     ));
     return saved;
-  }, [persist]);
+  }), [enqueueMutation, persist]);
 
   const updateEntryDetails = useCallback(async (
     profileId: string,
     entryId: string,
     details: { notes?: string; tasks?: ScheduleTask[] }
-  ) => {
+  ) => enqueueMutation(async () => {
     if (details.notes !== undefined && details.notes.length > 1200) {
       throw new Error("Catatan maksimal 1.200 karakter.");
     }
@@ -189,24 +204,34 @@ export function useSchedule() {
     if (!profile) throw new Error("Pilih jadwal yang tersedia.");
     const existing = profile.entries.find((entry) => entry.id === entryId);
     if (!existing) throw new Error("Pelajaran tidak ditemukan.");
-    const updatedEntry: ScheduleEntry = { ...existing, ...details };
+    const subjectKey = normalizeSubjectKey(existing.subject);
     const nextProfile = {
       ...profile,
-      entries: profile.entries.map((entry) => entry.id === entryId ? updatedEntry : entry)
+      entries: profile.entries.map((entry) => {
+        const sameSubject = normalizeSubjectKey(entry.subject) === subjectKey;
+        if (details.tasks !== undefined && sameSubject) {
+          return {
+            ...entry,
+            tasks: details.tasks,
+            ...(entry.id === entryId && details.notes !== undefined ? { notes: details.notes } : {})
+          };
+        }
+        return entry.id === entryId ? { ...entry, ...details } : entry;
+      })
     };
     await persist(snapshotRef.current.profiles.map((item) =>
       item.id === profileId ? nextProfile : item
     ));
-  }, [persist]);
+  }), [enqueueMutation, persist]);
 
-  const remove = useCallback(async (profileId: string, entryId: string) => {
+  const remove = useCallback((profileId: string, entryId: string) => enqueueMutation(async () => {
     const profiles = snapshotRef.current.profiles.map((profile) =>
       profile.id === profileId
         ? { ...profile, entries: profile.entries.filter((entry) => entry.id !== entryId) }
         : profile
     );
     await persist(profiles);
-  }, [persist]);
+  }), [enqueueMutation, persist]);
 
   return { snapshot, status, error, refresh, save, remove, updateEntryDetails };
 }
